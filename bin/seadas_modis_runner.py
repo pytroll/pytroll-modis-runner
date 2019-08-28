@@ -46,7 +46,10 @@ from modis_runner.helper_functions import get_local_ips
 from datetime import datetime
 from multiprocessing import Pool, Manager
 import threading
-from Queue import Empty
+try:
+    from Queue import Empty
+except ImportError:
+    from queue import Empty
 from trollsift import Parser, compose
 from subprocess import Popen, PIPE
 
