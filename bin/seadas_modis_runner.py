@@ -1018,7 +1018,7 @@ if __name__ == "__main__":
         source_cmd = 'source {} && env'.format(OPTIONS['ocssw_env'])
         proc = Popen(['bash', '-c', source_cmd], stdout=PIPE)
         for line in proc.stdout:
-            (key, _, value) = line.partition("=")
+            (key, _, value) = line.decode('utf-8').partition("=")
             os.environ[key] = value.rstrip()
 
         proc.communicate()
