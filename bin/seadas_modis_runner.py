@@ -25,12 +25,15 @@ from DRL as well to generate attitude and ephemeris data for Aqua.
 
 """
 
-import ConfigParser
+from six.moves.configparser import ConfigParser
 import logging
 import os
 import sys
 import shutil
-from urlparse import urlparse
+try:
+    from urlparse import urlparse
+except ImportError:
+    from urllib.parse import urlparse
 import posttroll.subscriber
 from posttroll.publisher import Publish
 from posttroll.message import Message
