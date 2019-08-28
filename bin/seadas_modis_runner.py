@@ -151,7 +151,8 @@ class FileListener(threading.Thread):
         self.queue.put(None)
 
     def run(self):
-        with posttroll.subscriber.Subscribe('', ['/XL-TERRA-ISP', '/XL-AQUA-ISP'], True) as subscr:
+        subscribe_topics = OPTIONS.get('subscribe_topics', '/XL-TERRA-ISP,/XL-AQUA-ISP').split(',')
+        with posttroll.subscriber.Subscribe('', subscribe_topics, True) as subscr:
             for msg in subscr.recv(timeout=90):
                 if not self.loop:
                     break
