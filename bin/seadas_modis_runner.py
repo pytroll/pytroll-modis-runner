@@ -25,7 +25,11 @@ from DRL as well to generate attitude and ephemeris data for Aqua.
 
 """
 
-from six.moves.configparser import ConfigParser
+try:
+    import ConfigParser as ConfigParser
+except ImportError:
+    import configparser as ConfigParser
+
 import logging
 import os
 import sys
