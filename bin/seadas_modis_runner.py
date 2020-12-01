@@ -460,7 +460,7 @@ def get_working_dir():
     return working_dir
 
 
-def run_aqua_gbad(obs_time, end_time=None, orbit_number=None):
+def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None):
     """Run the gbad for aqua"""
 
     working_dir = get_working_dir()
@@ -471,6 +471,7 @@ def run_aqua_gbad(obs_time, end_time=None, orbit_number=None):
         _data['start_time'] = obs_time
         _data['end_time'] = end_time
         _data['orbit_number'] = orbit_number
+        _data['process_time'] = process_time
         packetfile = os.path.join(level0_home, compose(OPTIONS['packetfile_aqua'], _data))
     else:
         packetfile = os.path.join(level0_home,
@@ -705,6 +706,7 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
         # Get the observation time from the filename as a datetime object:
         LOG.debug("modis filename = %s", scene['modisfilename'])
         bname = os.path.basename(scene['modisfilename'])
+        process_time = None
         if mission == 'T':
             parser = Parser(filetype_terra)
             res = parser.parse("{}".format(bname))
@@ -717,6 +719,7 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
             obstime = res['start_time']
             end_time = res['end_time']
             orbit_number = res['orbit_number']
+            process_time = res.get('process_time', None)
         LOG.debug("bname = %s obstime = %s", str(bname), str(obstime))
 
         # level1_home
@@ -812,7 +815,7 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
 
         if mission == 'A':
             # Get ephemeris and attitude names
-            attitude, ephemeris = run_aqua_gbad(obstime, end_time, orbit_number)
+            attitude, ephemeris = run_aqua_gbad(obstime, end_time, orbit_number, process_time=process_time)
             if not attitude or not ephemeris:
                 LOG.error(
                     "Failed producing the attitude and/or the ephemeris file(s)")
