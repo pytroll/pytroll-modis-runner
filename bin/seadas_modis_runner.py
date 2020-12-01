@@ -431,7 +431,11 @@ def ready2run(message, eosfiles, job_register, sceneid):
             if ((fname.find(modisfile_aqua_prfx) == 0) and fname.endswith(modisfile_aqua_postfx)):
                 eosfiles[sceneid]['modisfile'] = urlobj.path
             else:
+                LOG.debug("Not modisfile %s", str(urlobj.path)
+            if ((fname.find(packetfile_aqua_prfx) == 0) and fname.endswith(packetfile_aqua_postfx)):
                 eosfiles[sceneid]['packetfile'] = urlobj.path
+            else:
+                LOG.debug("Not packetfile %s", str(urlobj.path)
 
     if 'modisfile' in eosfiles[sceneid] and 'packetfile' in eosfiles[sceneid]:
         LOG.info("Files ready for MODIS level-1 runner: " +
