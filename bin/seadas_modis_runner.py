@@ -165,7 +165,9 @@ class FileListener(threading.Thread):
     def check_message(self, msg):
         if not msg:
             return False
-
+        if msg.type not in ('file', 'collection', 'dataset'):
+            return False
+ 
         urlobj = urlparse(msg.data['uri'])
         server = urlobj.netloc
         url_ip = socket.gethostbyname(urlobj.netloc)
