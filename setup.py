@@ -23,7 +23,6 @@
 
 """Setup for modis-dr-runner.
 """
-import imp
 from setuptools import setup, find_packages
 
 try:
@@ -43,7 +42,7 @@ except IOError:
     long_description = ''
 
 
-Name = "modis_runner"
+NAME = "modis_runner"
 
 setup(name=NAME,
       description=description,
