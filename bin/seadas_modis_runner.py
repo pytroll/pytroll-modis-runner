@@ -25,19 +25,13 @@ from DRL as well to generate attitude and ephemeris data for Aqua.
 
 """
 
-try:
-    import ConfigParser as ConfigParser
-except ImportError:
-    import configparser as ConfigParser
-
+import configparser as ConfigParser
 import logging
 import os
 import sys
 import shutil
-try:
-    from urlparse import urlparse
-except ImportError:
-    from urllib.parse import urlparse
+from urllib.parse import urlparse
+
 import posttroll.subscriber
 from posttroll.publisher import Publish
 from posttroll.message import Message
