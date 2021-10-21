@@ -42,7 +42,7 @@ working_dir: '/local_disk/src/modis_lvl1proc/work'
 
 spa_config_file: '/local_disk/opt/MODISL1DB_SPA/current/gbad/smhi_configfile'
 
-url_modis_navigation: 'http://oceandata.sci.gsfc.nasa.gov/Ancillary/LUTs/modis/'
+url_modis_navigation: 'https://oceandata.sci.gsfc.nasa.gov/Ancillary/LUTs/modis/'
 
 
 days_keep_old_etc_files: 90

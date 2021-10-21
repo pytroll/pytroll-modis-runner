@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 import os
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
+from socket import timeout
 import logging
 from six.moves.urllib.parse import urlparse
 
@@ -125,9 +126,12 @@ def update_utcpole_and_leapsec_files(options):
                                     options.get('days_keep_old_etc_files', 60))
     url_modis_navigation = options['url_modis_navigation']
     try:
-        usock = urlopen(url_modis_navigation)
+        usock = urlopen(url_modis_navigation, timeout=10)
     except URLError:
         LOG.warning('Failed opening url: %s', str(url_modis_navigation))
+        return
+    except timeout:
+        LOG.error('socket timed out - URL %s', url_modis_navigation)
         return
     else:
         usock.close()
@@ -137,9 +141,12 @@ def update_utcpole_and_leapsec_files(options):
     timestamp = now.strftime('%Y%m%d%H%M')
     for filename in NAVIGATION_HELPER_FILES:
         try:
-            usock = urlopen(url_modis_navigation + filename)
+            usock = urlopen(url_modis_navigation + filename, timeout=10)
         except HTTPError:
             LOG.warning("Failed opening file " + filename)
+            continue
+        except timeout:
+            LOG.error('socket timed out - URL %s', url_modis_navigation)
             continue
 
         data = usock.read()
