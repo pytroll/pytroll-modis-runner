@@ -89,9 +89,6 @@ def modis_live_runner(options):
     # leapsec.dat):
     LOG.info("Checking the modis luts and updating from internet if necessary!")
 
-    #DAYS_BETWEEN_URL_DOWNLOAD = options.get('days_between_url_download', 14)
-    #DAYS_KEEP_OLD_ETC_FILES = options.get('days_keep_old_etc_files', 60)
-
     fresh = check_utcpole_and_leapsec_files(options.get('leapsec_dir'),
                                             options.get('days_between_url_download', 14))
     if fresh:
@@ -117,7 +114,6 @@ def modis_live_runner(options):
     eos_files = {}
     jobs_dict = {}
     while True:
-
         try:
             msg = listener_q.get()
         except Empty:

@@ -159,9 +159,8 @@ def update_utcpole_and_leapsec_files(options):
         newname = filename + '_' + timestamp
         outfile = os.path.join(leapsec_dir, newname)
         linkfile = os.path.join(leapsec_dir, filename)
-        fd = open(outfile, 'w')
-        fd.write(data)
-        fd.close()
+        with open(outfile, 'wb') as fd_:
+            fd_.write(data)
 
         LOG.info("Data written to file " + outfile)
         # Here we could make a check on the sanity of the downloaded files:
