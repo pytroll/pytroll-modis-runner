@@ -313,8 +313,8 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
         else:
             mission = 'A'
 
-        startnudge = int(options['startnudge'])
-        endnudge = int(options['endnudge'])
+        startnudge = int(options.get('startnudge', 5))
+        endnudge = int(options.get('endnudge', 5))
 
         modis_destripe = options.get('modis_destripe_exe')
         terra_modis_destripe_coeff = options.get('terra_modis_destripe_coeff')
@@ -349,20 +349,20 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
         uid = None
         ftype = None
         if mission == 'T':
-            parser = Parser(filetype_terra)
-            res = parser.parse("{}".format(bname))
+            p__ = Parser(filetype_terra)
+            res = p__.parse(bname)
             obstime = res['start_time']  # datetime.strptime(bname, filetype_terra)
             end_time = None
             orbit_number = None
         else:
-            parser = Parser(filetype_aqua)
-            res = parser.parse("{}".format(bname))
-            obstime = res['start_time']
-            end_time = res['end_time']
-            orbit_number = res['orbit_number']
-            process_time = res.get('process_time', None)
-            uid = res.get('uid', None)
-            ftype = res.get('type', None)
+            p__ = Parser(filetype_aqua)
+            res = p__.parse(bname)
+            obstime = res.get('start_time')
+            end_time = res.get('end_time')
+            orbit_number = res.get('orbit_number')
+            process_time = res.get('process_time')
+            uid = res.get('uid')
+            ftype = res.get('type')
         LOG.debug("bname = %s obstime = %s", str(bname), str(obstime))
 
         # level1_home
