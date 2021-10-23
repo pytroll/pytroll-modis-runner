@@ -30,6 +30,7 @@ import os
 import shutil
 import argparse
 from datetime import datetime
+from posttroll.message import Message
 from multiprocessing import Pool, Manager
 import threading
 from queue import Empty
@@ -487,8 +488,10 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                     "--verbose",
                     "--enable-dem", "--disable-download",
                     # "--enable-dem",
-                    "-a%s" % attitude,
-                    "-e%s" % ephemeris,
+                    #"-a%s" % attitude,
+                    #"-e%s" % ephemeris,
+                    "--att1=%s" % attitude,
+                    "--eph1=%s" % ephemeris,
                     "-o%s" % (os.path.basename(mod03_file)),
                     mod01_file]
 
@@ -637,7 +640,8 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
         # Start checking and dowloading the luts (utcpole.dat and
         # leapsec.dat):
         LOG.info("Checking the modis luts and updating from internet if necessary!")
-        fresh = check_utcpole_and_leapsec_files(options.get('days_between_url_download', 14))
+        fresh = check_utcpole_and_leapsec_files(options.get('leapsec_dir'),
+                                                options.get('days_between_url_download', 14))
         if fresh:
             LOG.info("Files in etc dir are fresh! No url downloading....")
         else:
