@@ -31,6 +31,7 @@ import os
 
 from modis_runner.utils import scene_processed_recently
 from modis_runner.utils import ready2run
+from modis_runner.utils import get_geo_command_line_list
 
 
 OPTIONS = {'subscribe_topics': ['/PDS/0/nkp/dev/polar/direct_readout', '/XLBANDANTENNA/AQUA/ISP', '/XLBANDANTENNA/TERRA/ISP'], 'publish_topic': '/EOS', 'level0_home': '/local_disk/data/polar_in/direct_readout/modis', 'ephemeris_home': '/local_disk/data/polar_out/direct_readout/modis', 'attitude_home': '/local_disk/data/polar_out/direct_readout/modis', 'level1b_home': '/local_disk/data/polar_out/direct_readout/modis', 'filetype_aqua': 'P1540064AAAAAAAAAAAAAA%y%j%H%M%S001.PDS', 'globfile_aqua': 'P1540064AAAAAAAAAAAAAA*001.PDS', 'packetfile_aqua': 'P154095715409581540959%y%j%H%M%S001.PDS', 'geofile_aqua': 'MYD03_A%y%j_%H%M%S', 'level1a_aqua': 'Aqua_MODIS_l1a_%y%j_%H%M%S', 'level1b_aqua': 'MYD021km_A%y%j_%H%M%S', 'level1b_250m_aqua': 'MYD02Qkm_A%y%j_%H%M%S', 'level1b_500m_aqua': 'MYD02Hkm_A%y%j_%H%M%S', 'filetype_terra': 'P0420064AAAAAAAAAAAAAA%y%j%H%M%S001.PDS', 'globfile_terra': 'P0420064AAAAAAAAAAAAAA*001.PDS',
@@ -123,3 +124,45 @@ class TestModisRunnerSceneChecks(unittest.TestCase):
 
             res = ready2run(msg2data, eosfiles, self.scene_id1, self.options)
             assert res
+
+
+class TestPrepareSeaDASCalls(unittest.TestCase):
+    """Testing the preparation of SeaDAS command line calls."""
+
+    def test_get_geo_command_line_list(self):
+
+        options = {'modis_geo_script': '/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
+                   'modis_geo_options_terra': ['--verbose',
+                                               '--disable-download'],
+                   'modis_geo_options_aqua': ['--verbose',
+                                              '--enable-dem',
+                                              '--disable-download']}
+
+        mod01_file = "/path/to/eos/level1/files/my_mod01_filename"
+        mod03_file = "my_mod03_filename.hdf"
+
+        res = get_geo_command_line_list(options, mod01_file, mod03_file)
+
+        expected = ['/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
+                    '--verbose',
+                    '--disable-download',
+                    '-omy_mod03_filename.hdf',
+                    '/path/to/eos/level1/files/my_mod01_filename']
+
+        self.assertListEqual(res, expected)
+
+        att_filepath = '/path/to/eos/level1/files/P15409571540958154095921295233937001.att'
+        eph_filepath = '/path/to/eos/level1/files/P15409571540958154095921295233937001.eph'
+        res = get_geo_command_line_list(options, mod01_file, mod03_file,
+                                        attitude=att_filepath,
+                                        ephemeris=eph_filepath)
+
+        expected = ['/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
+                    '--verbose',
+                    '--enable-dem',
+                    '--disable-download',
+                    '--att1=/path/to/eos/level1/files/P15409571540958154095921295233937001.att',
+                    '--eph1=/path/to/eos/level1/files/P15409571540958154095921295233937001.eph',
+                    '-omy_mod03_filename.hdf', '/path/to/eos/level1/files/my_mod01_filename']
+
+        self.assertListEqual(res, expected)

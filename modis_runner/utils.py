@@ -268,3 +268,27 @@ def ready2run(message_data, eosfiles, sceneid, options):
         return True
     else:
         return False
+
+
+def get_geo_command_line_list(options, mod01_file, mod03_file, **kwargs):
+    """Get command line for the SeaDAS Geolocation script."""
+
+    modis_geo_script = options['modis_geo_script']
+    cmdl = [modis_geo_script, ]
+    if 'attitude' in kwargs and 'ephemeris' in kwargs:
+        cmd_opts = options.get('modis_geo_options_aqua')
+    else:
+        cmd_opts = options.get('modis_geo_options_terra')
+
+    if cmd_opts:
+        cmdl = cmdl + cmd_opts
+
+    if 'attitude' in kwargs and 'ephemeris' in kwargs:
+        aqua_opts = ["--att1=%s" % kwargs['attitude'],
+                     "--eph1=%s" % kwargs['ephemeris']]
+        cmdl = cmdl + aqua_opts + ["-o%s" % (os.path.basename(mod03_file)),
+                                   mod01_file]
+    else:
+        cmdl = cmdl + ["-o%s" % (os.path.basename(mod03_file)), mod01_file]
+
+    return cmdl

@@ -61,3 +61,11 @@ leapsec_dir: /san1/opt/SeaDAS/8.1/ocssw/var/modis
 modis_l1a_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_L1A
 modis_l1b_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_L1B
 modis_geo_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO
+
+modis_geo_options_terra:
+  - '--verbose'
+  - '--disable-download'
+modis_geo_options_aqua:
+  - '--verbose'
+  - '--enable-dem'
+  - '--disable-download'

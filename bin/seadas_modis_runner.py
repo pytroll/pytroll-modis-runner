@@ -42,6 +42,7 @@ from modis_runner.utils import check_working_dir
 from modis_runner.utils import check_utcpole_and_leapsec_files
 from modis_runner.utils import ready2run
 from modis_runner.utils import scene_processed_recently
+from modis_runner.utils import get_geo_command_line_list
 
 from modis_runner.publish_and_listen import MODISFileListener, MODISFilePublisher
 
@@ -470,30 +471,15 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                 return None
 
         # Next run the geolocation and the level-1b file:
-
         # Mission T: modis_GEO.py --verbose --enable-dem --entrained
         # --disable-download $level1a_file
         # Mission A: modis_GEO.py --verbose --enable-dem
         # --disable-download -a aqua.att -e aqua.eph $level1a_file
-        modis_geo_script = options['modis_geo_script']
         if mission == 'T':
-            cmdl = [modis_geo_script,
-                    "--verbose",
-                    "--enable-dem", "--entrained", "--disable-download",
-                    # "--enable-dem",
-                    "-o%s" % (os.path.basename(mod03_file)),
-                    mod01_file]
+            cmdl = get_geo_command_line_list(options, mod01_file, mod03_file)
         else:
-            cmdl = [modis_geo_script,
-                    "--verbose",
-                    "--enable-dem", "--disable-download",
-                    # "--enable-dem",
-                    #"-a%s" % attitude,
-                    #"-e%s" % ephemeris,
-                    "--att1=%s" % attitude,
-                    "--eph1=%s" % ephemeris,
-                    "-o%s" % (os.path.basename(mod03_file)),
-                    mod01_file]
+            cmdl = get_geo_command_line_list(options, mod01_file, mod03_file,
+                                             attitude=attitude, ephemeris=ephemeris)
 
         LOG.debug("Run command: %s", str(cmdl))
         modislvl1b_proc = Popen(
