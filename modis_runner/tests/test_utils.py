@@ -39,6 +39,7 @@ OPTIONS = {'subscribe_topics': ['/PDS/0/nkp/dev/polar/direct_readout', '/XLBANDA
 
 
 class TestModisRunnerSceneChecks(unittest.TestCase):
+    """Test various aspects on checking the scene messages before launching the actual processing."""
 
     def setUp(self):
         self.scene_id1 = "EOS-Aqua_3423_202110131328"
@@ -59,7 +60,7 @@ class TestModisRunnerSceneChecks(unittest.TestCase):
         self.options = OPTIONS
 
     def test_scene_processed_recently(self):
-
+        """Test the function to check if a given scene has been processed before."""
         job_register = self.job1
 
         res = scene_processed_recently(job_register, self.scene_id1)
@@ -69,7 +70,7 @@ class TestModisRunnerSceneChecks(unittest.TestCase):
         self.assertFalse(res)
 
     def test_ready2run_terra_scene(self):
-
+        """Test the function checking if a Terra scene is ready for processing."""
         with tempfile.TemporaryDirectory() as tmpdirname:
 
             filename1 = "P0420064AAAAAAAAAAAAAA21284194359001.PDS"
@@ -97,7 +98,7 @@ class TestModisRunnerSceneChecks(unittest.TestCase):
             assert res
 
     def test_ready2run_aqua_scene(self):
-
+        """Test the function checking if a Aqua scene is ready for processing."""
         with tempfile.TemporaryDirectory() as tmpdirname:
 
             filename1 = "P15409571540958154095921286132853001.PDS"
@@ -129,19 +130,20 @@ class TestModisRunnerSceneChecks(unittest.TestCase):
 class TestPrepareSeaDASCalls(unittest.TestCase):
     """Testing the preparation of SeaDAS command line calls."""
 
-    def test_get_geo_command_line_list(self):
+    def setUp(self):
+        self.options = {'modis_geo_script': '/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
+                        'modis_geo_options_terra': ['--verbose',
+                                                    '--disable-download'],
+                        'modis_geo_options_aqua': ['--verbose',
+                                                   '--enable-dem',
+                                                   '--disable-download']}
+        self.mod01_file = "/path/to/eos/level1/files/my_mod01_filename"
+        self.mod03_file = "my_mod03_filename.hdf"
 
-        options = {'modis_geo_script': '/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
-                   'modis_geo_options_terra': ['--verbose',
-                                               '--disable-download'],
-                   'modis_geo_options_aqua': ['--verbose',
-                                              '--enable-dem',
-                                              '--disable-download']}
+    def test_get_geo_command_line_list_terra(self):
+        """Test getting the command line options used when launching the Terra/modis Geo location processing."""
 
-        mod01_file = "/path/to/eos/level1/files/my_mod01_filename"
-        mod03_file = "my_mod03_filename.hdf"
-
-        res = get_geo_command_line_list(options, mod01_file, mod03_file)
+        res = get_geo_command_line_list(self.options, self.mod01_file, self.mod03_file)
 
         expected = ['/san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO',
                     '--verbose',
@@ -151,9 +153,12 @@ class TestPrepareSeaDASCalls(unittest.TestCase):
 
         self.assertListEqual(res, expected)
 
+    def test_get_geo_command_line_list_aqua(self):
+        """Test getting the command line options used when launching the Aqua/modis Geo location processing."""
+
         att_filepath = '/path/to/eos/level1/files/P15409571540958154095921295233937001.att'
         eph_filepath = '/path/to/eos/level1/files/P15409571540958154095921295233937001.eph'
-        res = get_geo_command_line_list(options, mod01_file, mod03_file,
+        res = get_geo_command_line_list(self.options, self.mod01_file, self.mod03_file,
                                         attitude=att_filepath,
                                         ephemeris=eph_filepath)
 
