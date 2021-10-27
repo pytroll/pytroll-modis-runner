@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016 - 2019 PyTroll
+# Copyright (c) 2016 - 2021 PyTroll
 
 # Author(s):
 
-#   Adam.Dybbroe <adam.dybbroe@smhi.se>
+#   Adam Dybbroe <Firstname.Lastname@smhi.se>
+#   Trygve Aspenes, MET Norway
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,28 +20,36 @@
 
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""Runner for MODIS level-1 processing using SeaDAS-7.2. Needs the gbad software
-from DRL as well to generate attitude and ephemeris data for Aqua.
+"""Runner for MODIS level-1 processing using SeaDAS. Needs the gbad software
+from DRL as well, in order to generate attitude and ephemeris data for Aqua.
 
 """
 
-import ConfigParser
 import logging
-LOG = logging.getLogger(__name__)
-
 import os
-import sys
 import shutil
-from urlparse import urlparse
-import posttroll.subscriber
-from posttroll.publisher import Publish
-from posttroll.message import Message
-import socket
-from modis_runner.helper_functions import get_local_ips
+import argparse
 from datetime import datetime
+from posttroll.message import Message
 from multiprocessing import Pool, Manager
 import threading
-from Queue import Empty
+from queue import Empty
+from trollsift import Parser, compose
+from subprocess import Popen, PIPE
+
+from modis_runner.utils import update_utcpole_and_leapsec_files
+from modis_runner.utils import check_working_dir
+from modis_runner.utils import check_utcpole_and_leapsec_files
+from modis_runner.utils import ready2run
+from modis_runner.utils import scene_processed_recently
+from modis_runner.utils import get_geo_command_line_list
+
+from modis_runner.publish_and_listen import MODISFileListener, MODISFilePublisher
+
+from modis_runner.config import get_config
+from modis_runner.logger import setup_logging
+
+LOG = logging.getLogger(__name__)
 
 EOS_SATELLITES = ['EOS-Terra', 'EOS-Aqua']
 TERRA = 'EOS-Terra'
@@ -52,138 +61,27 @@ _DEFAULT_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 #: Default log format
 _DEFAULT_LOG_FORMAT = '[%(levelname)s: %(asctime)s : %(name)s] %(message)s'
 
-SEADAS_HOME = os.environ.get("SEADAS_HOME", '')
-APPL_HOME = os.environ.get('MODIS_LVL1PROC', '')
-ETC_DIR = os.path.join(SEADAS_HOME, 'ocssw/run/var/modis')
 DESTRIPE_HOME = os.environ.get('MODIS_DESTRIPING_HOME', '')
-
 SPA_HOME = os.environ.get("SPA_HOME", '')
-# ETC_DIR = os.path.join(SPA_HOME, 'etc')
-
-NAVIGATION_HELPER_FILES = ['utcpole.dat', 'leapsec.dat']
-
-MODE = os.getenv("SMHI_MODE")
-if MODE is None:
-    MODE = "offline"
-
-PACKETFILE_AQUA_PRFX = "P154095715409581540959"
-MODISFILE_AQUA_PRFX = "P1540064AAAAAAAAAAAAAA"
-MODISFILE_TERRA_PRFX = "P0420064AAAAAAAAAAAAAA"
 
 
 def reset_job_registry(objdict, eosfiles, key):
     """Remove job key from registry"""
-    LOG.debug("Release/reset job-key " + str(key) + " from job registry")
+    LOG.debug("Release/reset job-key %s from job registry", str(key))
     if key in objdict:
         objdict.pop(key)
     else:
-        LOG.warning("Nothing to reset/release - " +
-                    "Job registry didn't contain any entry matching: " +
-                    str(key))
+        LOG.warning("Nothing to reset/release - Job registry didn't contain any entry matching: %s", str(key))
 
-    LOG.debug("Release/reset key " + str(key) + " from eosfiles registry")
+    LOG.debug("Release/reset key %s from eosfiles registry", str(key))
     if key in eosfiles:
         eosfiles.pop(key)
     else:
-        LOG.warning("Nothing to reset/release - " +
-                    "EOS-files registry didn't contain any entry matching: " +
-                    str(key))
+        LOG.warning("Nothing to reset/release - EOS-files registry didn't contain any entry matching: %s", str(key))
     return
 
 
-class FilePublisher(threading.Thread):
-    """A publisher for the MODIS level-1 files. Picks up the return value
-    from XXX when ready, and publish the files via posttroll
-
-    """
-
-    def __init__(self, queue):
-        threading.Thread.__init__(self)
-        self.loop = True
-        self.queue = queue
-        self.jobs = {}
-
-    def stop(self):
-        """Stops the file publisher"""
-        self.loop = False
-        self.queue.put(None)
-
-    def run(self):
-
-        with Publish('modis_dr_runner', 0, [
-                'EOS/1B',
-        ]) as publisher:
-
-            while self.loop:
-                retv = self.queue.get()
-
-                if retv != None:
-                    LOG.info("Publish the files...")
-                    publisher.send(retv)
-
-
-class FileListener(threading.Thread):
-    """A file listener class, to listen for incoming messages with a
-    relevant file for further processing"""
-
-    def __init__(self, queue):
-        threading.Thread.__init__(self)
-        self.loop = True
-        self.queue = queue
-
-    def stop(self):
-        """Stops the file listener"""
-        self.loop = False
-        self.queue.put(None)
-
-    def run(self):
-
-        with posttroll.subscriber.Subscribe('receiver', [
-                'PDS/0',
-        ], True) as subscr:
-
-            for msg in subscr.recv(timeout=90):
-                if not self.loop:
-                    break
-
-                # Check if it is a relevant message:
-                if self.check_message(msg):
-                    LOG.debug("Put the message on the queue...")
-                    self.queue.put(msg)
-
-    def check_message(self, msg):
-        if not msg:
-            return False
-
-        urlobj = urlparse(msg.data['uri'])
-        server = urlobj.netloc
-        url_ip = socket.gethostbyname(urlobj.netloc)
-        if server and (url_ip not in get_local_ips()):
-            LOG.warning("Server %s not the current one: %s", str(server),
-                        socket.gethostname())
-            return False
-
-        if ('platform_name' not in msg.data or 'orbit_number' not in msg.data
-                or 'start_time' not in msg.data):
-            LOG.info("Message is lacking crucial fields...")
-            return False
-
-        if msg.data['platform_name'] not in EOS_SATELLITES:
-            LOG.info(
-                str(msg.data['platform_name']) + ": " +
-                "Not an EOS satellite. Continue...")
-            return False
-
-        sensor = msg.data.get('sensor', None)
-        if sensor not in ['modis', 'gbad']:
-            LOG.debug("Not MODIS or GBAD data, skip it...")
-            return False
-
-        LOG.debug("Ok: message = %s", str(msg))
-        return True
-
-
-def modis_live_runner():
+def modis_live_runner(options):
     """Listens and triggers processing"""
 
     LOG.info("*** Start the runner for the MODIS level-1 processing")
@@ -191,66 +89,72 @@ def modis_live_runner():
 
     # Start checking and dowloading the luts (utcpole.dat and
     # leapsec.dat):
-    LOG.info("Checking the modis luts and updating " +
-             "from internet if necessary!")
-    fresh = check_utcpole_and_leapsec_files(DAYS_BETWEEN_URL_DOWNLOAD)
+    LOG.info("Checking the modis luts and updating from internet if necessary!")
+
+    fresh = check_utcpole_and_leapsec_files(options.get('leapsec_dir'),
+                                            options.get('days_between_url_download', 14))
     if fresh:
         LOG.info("Files in etc dir are fresh! No url downloading....")
     else:
         LOG.warning("Files in etc are non existent or too old. " +
                     "Start url fetch...")
-        update_utcpole_and_leapsec_files()
+        update_utcpole_and_leapsec_files(options)
 
     pool = Pool(processes=6, maxtasksperchild=1)
     manager = Manager()
     listener_q = manager.Queue()
     publisher_q = manager.Queue()
 
-    pub_thread = FilePublisher(publisher_q)
+    pub_thread = MODISFilePublisher(publisher_q, options.get('publish_topic'))
     pub_thread.start()
-    listen_thread = FileListener(listener_q)
+
+    subscribe_topics = options.get('subscribe_topics')
+    eos_satellites = EOS_SATELLITES
+    listen_thread = MODISFileListener(listener_q, subscribe_topics, eos_satellites)
     listen_thread.start()
 
     eos_files = {}
     jobs_dict = {}
     while True:
-
         try:
             msg = listener_q.get()
         except Empty:
             LOG.debug("Empty listener queue...")
             continue
 
-        LOG.debug("Number of threads currently alive: " +
-                  str(threading.active_count()))
-
-        LOG.info("EOS files: " + str(eos_files))
+        LOG.debug("Number of threads currently alive: %s", str(threading.active_count()))
+        LOG.info("EOS files: %s", str(eos_files))
         LOG.debug("\tMessage:")
         LOG.debug(msg)
 
+        start_time = None
         if 'start_time' in msg.data:
             start_time = msg.data['start_time']
         else:
             LOG.warning("start_time not in message!")
-            start_time = None
 
+        end_time = None
         if 'end_time' in msg.data:
             end_time = msg.data['end_time']
         else:
             LOG.warning("No end_time in message!")
-            end_time = None
 
         platform_name = msg.data['platform_name']
         orbit_number = int(msg.data['orbit_number'])
-        urlobj = urlparse(msg.data['uri'])
         sensor = msg.data.get('sensor', None)
 
         keyname = (str(platform_name) + '_' + str(orbit_number) + '_' + str(
             start_time.strftime('%Y%m%d%H%M')))
         # Check if we have all the files before processing can start:
 
-        status = ready2run(msg, eos_files, jobs_dict, keyname)
+        if scene_processed_recently(jobs_dict, keyname):
+            continue
+
+        status = ready2run(msg.data, eos_files, keyname, options)
         if status:
+            # Register scene:
+            jobs_dict[keyname] = datetime.utcnow()
+
             # Run
             LOG.info("Ready to run...")
             LOG.debug("Modisfile = %s", eos_files[keyname]['modisfile'])
@@ -268,11 +172,10 @@ def modis_live_runner():
 
             if platform_name in [TERRA, AQUA]:
                 # Do processing:
-                LOG.info("Level-0 to lvl1 processing on " +
-                         "Terra/Aqua MODIS: Start..." + " Start time = " +
+                LOG.info("Level-0 to lvl1 processing on Terra/Aqua MODIS: Start... Start time = %s",
                          str(start_time))
                 pool.apply_async(run_terra_aqua_l0l1,
-                                 (scene, msg, jobs_dict[keyname], publisher_q))
+                                 (options, scene, msg, jobs_dict[keyname], publisher_q))
                 LOG.debug("Terra/Aqua lvl1 processing sent to pool worker...")
             else:
                 LOG.debug("Platform %s not supported yet...",
@@ -319,104 +222,30 @@ def create_message(mda, filename, level):
     station = OPTIONS.get('station', 'unknown')
     message = Message(
         '/'.join(('', str(to_send['format']),
-                  str(to_send['data_processing_level']), station, MODE, 'polar'
+                  str(to_send['data_processing_level']), station, 'polar'
                   'direct_readout')), mtype, to_send).encode()
+
     return message
 
 
-def ready2run(message, eosfiles, job_register, sceneid):
-    """Check if we have got all the input lvl0 files and that we are
-    ready to process MODIS lvl1 data.
-
-    """
-
-    LOG.debug("Scene identifier = " + str(sceneid))
-    LOG.debug("Job register = " + str(job_register))
-    if sceneid in job_register and job_register[sceneid]:
-        LOG.debug("Processing of scene " + str(sceneid) +
-                  " has already been launched...")
-        return False
-
-    if sceneid not in eosfiles:
-        eosfiles[sceneid] = {}
-
-    urlobj = urlparse(message.data['uri'])
-
-    if 'start_time' in message.data:
-        start_time = message.data['start_time']
-    else:
-        LOG.warning("start_time not in message!")
-        start_time = None
-
-    if (message.data['platform_name'] == "EOS-Terra"
-            and message.data['sensor'] == 'modis'):
-        # orbnum = message.data.get('orbit_number', None)
-
-        path, fname = os.path.split(urlobj.path)
-        LOG.debug("path " + str(path) + " filename = " + str(fname))
-        if fname.startswith(MODISFILE_TERRA_PRFX) and fname.endswith(
-                '001.PDS'):
-            # Check if the file exists:
-            if not os.path.exists(urlobj.path):
-                LOG.warning("File is reported to be dispatched " +
-                            "but is not there! File = " + urlobj.path)
-                return False
-
-            eosfiles[sceneid]['modisfile'] = urlobj.path
-            eosfiles[sceneid]['packetfile'] = ''
-
-    elif (message.data['platform_name'] == "EOS-Aqua"
-          and message.data['sensor'] in ['modis', 'gbad']):
-
-        path, fname = os.path.split(urlobj.path)
-        LOG.debug("path " + str(path) + " filename = " + str(fname))
-        if ((fname.find(MODISFILE_AQUA_PRFX) == 0
-             or fname.find(PACKETFILE_AQUA_PRFX) == 0)
-                and fname.endswith('001.PDS')):
-            # Check if the file exists:
-            if not os.path.exists(urlobj.path):
-                LOG.warning("File is reported to be dispatched " +
-                            "but is not there! File = " + urlobj.path)
-                return False
-
-            if fname.find(MODISFILE_AQUA_PRFX) == 0:
-                eosfiles[sceneid]['modisfile'] = urlobj.path
-            else:
-                eosfiles[sceneid]['packetfile'] = urlobj.path
-
-    if 'modisfile' in eosfiles[sceneid] and 'packetfile' in eosfiles[sceneid]:
-        LOG.info("Files ready for MODIS level-1 runner: " +
-                 str(eosfiles[sceneid]))
-
-        job_register[sceneid] = datetime.utcnow()
-        return True
-    else:
-        return False
-
-
-def get_working_dir():
-    working_dir = OPTIONS['working_dir']
-    if not os.path.exists(working_dir):
-        try:
-            os.makedirs(working_dir)
-        except OSError:
-            LOG.error("Failed creating working directory %s", working_dir)
-            working_dir = '/tmp'
-            LOG.info("Will use /tmp")
-
-    return working_dir
-
-
-def run_aqua_gbad(obs_time):
+def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None, uid=None, ftype=None):
     """Run the gbad for aqua"""
 
-    from subprocess import Popen, PIPE
-
-    working_dir = get_working_dir()
+    working_dir = check_working_dir(OPTIONS['working_dir'])
 
     level0_home = OPTIONS['level0_home']
-    packetfile = os.path.join(level0_home,
-                              obs_time.strftime(OPTIONS['packetfile_aqua']))
+    if (end_time and orbit_number):
+        _data = {}
+        _data['start_time'] = obs_time
+        _data['end_time'] = end_time
+        _data['orbit_number'] = orbit_number
+        _data['process_time'] = process_time
+        _data['uid'] = uid
+        _data['type'] = ftype
+        packetfile = os.path.join(level0_home, compose(OPTIONS['packetfile_aqua'], _data))
+    else:
+        packetfile = os.path.join(level0_home,
+                                  obs_time.strftime(OPTIONS['packetfile_aqua']))
 
     att_dir = OPTIONS['attitude_home']
     eph_dir = OPTIONS['ephemeris_home']
@@ -428,11 +257,19 @@ def run_aqua_gbad(obs_time):
     LOG.info("eph-file = " + eph_file)
 
     wrapper_home = SPA_HOME + "/wrapper/gbad"
-    cmdl = [
-        "%s/run" % wrapper_home, "aqua.gbad.pds", packetfile, "aqua.gbad_att",
-        att_file, "aqua.gbad_eph", eph_file, "configurationfile",
-        spa_config_file
-    ]
+
+    cmdl = ["%s/run" % wrapper_home, "aqua.gbad.pds",
+            packetfile, "aqua.gbad_att", att_file,
+            "aqua.gbad_eph", eph_file
+            # "configurationfile", spa_config_file
+            ]
+    if os.path.exists(spa_config_file):
+        cmdl.append("configurationfile")
+        cmdl.append(spa_config_file)
+    else:
+        LOG.warning("SPA config file: {} does not exist. Skip this."
+                    "If this is not what you want, fix your config".format(spa_config_file))
+
     LOG.info("Command: " + str(cmdl))
     # Run the command:
     modislvl1b_proc = Popen(
@@ -442,13 +279,13 @@ def run_aqua_gbad(obs_time):
         line = modislvl1b_proc.stdout.readline()
         if not line:
             break
-        LOG.info(line)
+        LOG.info(line.rstrip())
 
     while True:
         errline = modislvl1b_proc.stderr.readline()
         if not errline:
             break
-        LOG.info(errline)
+        LOG.info(errline.rstrip())
 
     modislvl1b_proc.poll()
     modislvl1b_status = modislvl1b_proc.returncode
@@ -460,148 +297,17 @@ def run_aqua_gbad(obs_time):
     return att_file, eph_file
 
 
-def clean_utcpole_and_leapsec_files(thr_days=60):
-    """Clean any old *leapsec.dat* and *utcpole.dat* backup files, older than
-    *thr_days* old
-
-    """
-    from glob import glob
-    from datetime import datetime, timedelta
-    import os
-
-    now = datetime.utcnow()
-    deltat = timedelta(days=int(thr_days))
-
-    # Make the list of files to clean:
-    flist = glob(os.path.join(ETC_DIR, '*.dat_*'))
-    for filename in flist:
-        lastpart = os.path.basename(filename).split('dat_')[1]
-        tobj = datetime.strptime(lastpart, "%Y%m%d%H%M")
-        if (now - tobj) > deltat:
-            LOG.info("File too old, cleaning: %s " % filename)
-            os.remove(filename)
-
-    return
-
-
-def check_utcpole_and_leapsec_files(thr_days=14):
-    """Check if the files *leapsec.dat* and *utcpole.dat* are available in the
-    etc directory and check if they are fresh.
-    Return True if fresh/new files exists, otherwise False
-
-    """
-
-    from glob import glob
-    from datetime import datetime, timedelta
-
-    now = datetime.utcnow()
-    tdelta = timedelta(days=int(thr_days))
-
-    files_ok = True
-    for bname in NAVIGATION_HELPER_FILES:
-        LOG.info("File " + str(bname) + "...")
-        filename = os.path.join(ETC_DIR, bname)
-        if os.path.exists(filename):
-            # Check how old it is:
-            realpath = os.path.realpath(filename)
-            # Get the timestamp in the file name:
-            try:
-                tstamp = os.path.basename(realpath).split('.dat_')[1]
-            except IndexError:
-                files_ok = False
-                break
-            tobj = datetime.strptime(tstamp, "%Y%m%d%H%M")
-
-            if (now - tobj) > tdelta:
-                LOG.info("File too old! File=%s " % filename)
-                files_ok = False
-                break
-        else:
-            LOG.info("No navigation helper file: %s" % filename)
-            files_ok = False
-            break
-
-    return files_ok
-
-
-def update_utcpole_and_leapsec_files():
-    """
-    Function to update the ancillary data files *leapsec.dat* and
-    *utcpole.dat* used in the navigation of MODIS direct readout data.
-
-    These files need to be updated at least once every 2nd week, in order to
-    achieve the best possible navigation.
-
-    """
-    import urllib2
-    import os
-    import sys
-    from datetime import datetime
-
-    # Start cleaning any possible old files:
-    clean_utcpole_and_leapsec_files(DAYS_KEEP_OLD_ETC_FILES)
-
-    try:
-        usock = urllib2.urlopen(URL)
-    except urllib2.URLError:
-        LOG.warning('Failed opening url: ' + URL)
-        return
-    else:
-        usock.close()
-
-    LOG.info("Start downloading....")
-    now = datetime.utcnow()
-    timestamp = now.strftime('%Y%m%d%H%M')
-    for filename in NAVIGATION_HELPER_FILES:
-        try:
-            usock = urllib2.urlopen(URL + filename)
-        except urllib2.HTTPError:
-            LOG.warning("Failed opening file " + filename)
-            continue
-
-        data = usock.read()
-        usock.close()
-        LOG.info("Data retrieved from url...")
-
-        # I store the files with a timestamp attached, in order not to remove
-        # the existing files. In case something gets wrong in the download, we
-        # can handle this by not changing the sym-links below:
-        newname = filename + '_' + timestamp
-        outfile = os.path.join(ETC_DIR, newname)
-        linkfile = os.path.join(ETC_DIR, filename)
-        fd = open(outfile, 'w')
-        fd.write(data)
-        fd.close()
-
-        LOG.info("Data written to file " + outfile)
-        # Here we could make a check on the sanity of the downloaded files:
-        # TODO!
-
-        # Update the symlinks (assuming the files are okay):
-        LOG.debug("Adding symlink %s -> %s", linkfile, outfile)
-        if os.path.islink(linkfile):
-            LOG.debug("Unlinking %s", linkfile)
-            os.unlink(linkfile)
-
-        try:
-            os.symlink(outfile, linkfile)
-        except OSError as err:
-            LOG.warning(str(err))
-
-    return
-
-
-def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
+def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
     """Process Terra/Aqua MODIS level 0 PDS data to level 1a/1b"""
 
-    from subprocess import Popen, PIPE
+    # from subprocess import Popen, PIPE
     from glob import glob
 
     try:
 
         LOG.debug("Inside run_terra_aqua_l0l1...")
 
-        working_dir = get_working_dir()
+        working_dir = check_working_dir(options['working_dir'])
         LOG.debug("Working dir = %s", str(working_dir))
 
         if scene['platform_name'] == TERRA:
@@ -609,42 +315,56 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
         else:
             mission = 'A'
 
-        startnudge = int(OPTIONS['startnudge'])
-        endnudge = int(OPTIONS['endnudge'])
+        startnudge = int(options.get('startnudge', 5))
+        endnudge = int(options.get('endnudge', 5))
 
-        modis_destripe = OPTIONS.get('modis_destripe_exe')
-        terra_modis_destripe_coeff = OPTIONS.get('terra_modis_destripe_coeff')
-        aqua_modis_destripe_coeff = OPTIONS.get('aqua_modis_destripe_coeff')
-        if OPTIONS.get('apply_destriping'):
+        modis_destripe = options.get('modis_destripe_exe')
+        terra_modis_destripe_coeff = options.get('terra_modis_destripe_coeff')
+        aqua_modis_destripe_coeff = options.get('aqua_modis_destripe_coeff')
+        if options.get('apply_destriping'):
             destripe_on = True
         else:
             destripe_on = False
 
-        level1b_home = OPTIONS['level1b_home']
+        level1b_home = options['level1b_home']
         LOG.debug("level1b_home = %s", level1b_home)
-        filetype_terra = OPTIONS['filetype_terra']
-        LOG.debug("filetype_terra = %s", OPTIONS['filetype_terra'])
+        filetype_terra = options['filetype_terra']
+        LOG.debug("filetype_terra = %s", options['filetype_terra'])
         geofiles = {}
-        geofiles[mission] = OPTIONS['geofile_%s' % MISSIONS[mission]]
-        level1a_terra = OPTIONS['level1a_terra']
-        level1b_terra = OPTIONS['level1b_terra']
-        level1b_250m_terra = OPTIONS['level1b_250m_terra']
-        level1b_500m_terra = OPTIONS['level1b_500m_terra']
+        geofiles[mission] = options['geofile_%s' % MISSIONS[mission]]
+        level1a_terra = options['level1a_terra']
+        level1b_terra = options['level1b_terra']
+        level1b_250m_terra = options['level1b_250m_terra']
+        level1b_500m_terra = options['level1b_500m_terra']
 
-        filetype_aqua = OPTIONS['filetype_aqua']
+        filetype_aqua = options['filetype_aqua']
         LOG.debug("filetype_aqua = %s", str(filetype_aqua))
-        level1a_aqua = OPTIONS['level1a_aqua']
-        level1b_aqua = OPTIONS['level1b_aqua']
-        level1b_250m_aqua = OPTIONS['level1b_250m_aqua']
-        level1b_500m_aqua = OPTIONS['level1b_500m_aqua']
+        level1a_aqua = options['level1a_aqua']
+        level1b_aqua = options['level1b_aqua']
+        level1b_250m_aqua = options['level1b_250m_aqua']
+        level1b_500m_aqua = options['level1b_500m_aqua']
 
         # Get the observation time from the filename as a datetime object:
         LOG.debug("modis filename = %s", scene['modisfilename'])
         bname = os.path.basename(scene['modisfilename'])
+        process_time = None
+        uid = None
+        ftype = None
         if mission == 'T':
-            obstime = datetime.strptime(bname, filetype_terra)
+            p__ = Parser(filetype_terra)
+            res = p__.parse(bname)
+            obstime = res['start_time']  # datetime.strptime(bname, filetype_terra)
+            end_time = None
+            orbit_number = None
         else:
-            obstime = datetime.strptime(bname, filetype_aqua)
+            p__ = Parser(filetype_aqua)
+            res = p__.parse(bname)
+            obstime = res.get('start_time')
+            end_time = res.get('end_time')
+            orbit_number = res.get('orbit_number')
+            process_time = res.get('process_time')
+            uid = res.get('uid')
+            ftype = res.get('type')
         LOG.debug("bname = %s obstime = %s", str(bname), str(obstime))
 
         # level1_home
@@ -693,36 +413,39 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
                         mod01files[0])
 
         LOG.info("Level-1 filename: " + str(mod01_file))
-        modisl1_home = os.path.join(SEADAS_HOME, "ocssw/run/scripts")
-        cmdl = [
-            "%s/modis_L1A.py" % modisl1_home, "--verbose",
-            "--mission=%s" % mission,
-            "--startnudge=%d" % startnudge,
-            "--stopnudge=%d" % endnudge,
-            "-o%s" % (os.path.basename(mod01_file)), scene['modisfilename']
-        ]
+
+        modis_l1a_script = options['modis_l1a_script']
+        cmdl = [modis_l1a_script,
+                "--verbose",
+                "--mission=%s" % mission,
+                "--startnudge=%d" % startnudge,
+                "--stopnudge=%d" % endnudge,
+                "-o%s" % (os.path.basename(mod01_file)),
+                scene['modisfilename']]
 
         LOG.debug("Run command: " + str(cmdl))
-        modislvl1b_proc = Popen(
-            cmdl, shell=False, cwd=working_dir, stderr=PIPE, stdout=PIPE)
+        my_env = os.environ.copy()
+        modislvl1b_proc = Popen(cmdl, shell=False,
+                                cwd=working_dir,
+                                stderr=PIPE, stdout=PIPE, env=my_env)
 
         while True:
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line)
+            LOG.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline)
+            LOG.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
-        LOG.debug("Return code from modis lvl-1a processing = " +
-                  str(modislvl1b_status))
-        if modislvl1b_status != 0:
+        LOG.debug(
+            "Return code from modis lvl-1a processing = " + str(modislvl1b_status))
+        if modislvl1b_status != 0 and modislvl1b_status is not None:
             LOG.error("Failed in the Terra/Aqua MODIS level-1 processing!")
             return None
 
@@ -739,7 +462,8 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
 
         if mission == 'A':
             # Get ephemeris and attitude names
-            attitude, ephemeris = run_aqua_gbad(obstime)
+            attitude, ephemeris = run_aqua_gbad(obstime, end_time, orbit_number,
+                                                process_time=process_time, uid=uid, ftype=ftype)
             if not attitude or not ephemeris:
                 LOG.error(
                     "Failed producing the attitude and/or the ephemeris file(s)"
@@ -747,25 +471,15 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
                 return None
 
         # Next run the geolocation and the level-1b file:
-
         # Mission T: modis_GEO.py --verbose --enable-dem --entrained
         # --disable-download $level1a_file
         # Mission A: modis_GEO.py --verbose --enable-dem
         # --disable-download -a aqua.att -e aqua.eph $level1a_file
         if mission == 'T':
-            cmdl = [
-                "%s/modis_GEO.py" % modisl1_home, "--verbose", "--enable-dem",
-                "--entrained", "--disable-download",
-                "-o%s" % (os.path.basename(mod03_file)), mod01_file
-            ]
+            cmdl = get_geo_command_line_list(options, mod01_file, mod03_file)
         else:
-            cmdl = [
-                "%s/modis_GEO.py" % modisl1_home, "--verbose", "--enable-dem",
-                "--disable-download",
-                "-a%s" % attitude,
-                "-e%s" % ephemeris,
-                "-o%s" % (os.path.basename(mod03_file)), mod01_file
-            ]
+            cmdl = get_geo_command_line_list(options, mod01_file, mod03_file,
+                                             attitude=attitude, ephemeris=ephemeris)
 
         LOG.debug("Run command: %s", str(cmdl))
         modislvl1b_proc = Popen(
@@ -775,13 +489,13 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line)
+            LOG.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline)
+            LOG.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
@@ -804,13 +518,13 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
             LOG.warning("Missing file: %s", fname_orig)
 
         # modis_L1B.py --verbose $level1a_file $geo_file
-        cmdl = [
-            "%s/modis_L1B.py" % modisl1_home, "--verbose",
-            "--okm=%s" % os.path.basename(mod021km_file),
-            "--hkm=%s" % os.path.basename(mod02hkm_file),
-            "--qkm=%s" % os.path.basename(mod02qkm_file), mod01_file,
-            mod03_file
-        ]
+        modis_l1b_script = options['modis_l1b_script']
+        cmdl = [modis_l1b_script,
+                "--okm=%s" % os.path.basename(mod021km_file),
+                "--hkm=%s" % os.path.basename(mod02hkm_file),
+                "--qkm=%s" % os.path.basename(mod02qkm_file), mod01_file,
+                mod03_file
+                ]
 
         LOG.debug("Run command: " + str(cmdl))
         modislvl1b_proc = Popen(
@@ -820,19 +534,20 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line)
+            LOG.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline)
+            LOG.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
-        LOG.debug("Return code from modis lvl1b processing = " +
-                  str(modislvl1b_status))
-        if modislvl1b_status != 0:
+
+        LOG.debug(
+            "Return code from modis lvl1b processing = " + str(modislvl1b_status))
+        if modislvl1b_status != 0 and modislvl1b_status is not None:
             LOG.error("Failed in the Terra level-1 processing!")
             return None
 
@@ -861,13 +576,13 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
                 line = modislvl1b_proc.stdout.readline()
                 if not line:
                     break
-                LOG.info(line)
+                LOG.info(line.rstrip())
 
             while True:
                 errline = modislvl1b_proc.stderr.readline()
                 if not errline:
                     break
-                LOG.info(errline)
+                LOG.info(errline.rstrip())
 
             modislvl1b_proc.poll()
             modislvl1b_status = modislvl1b_proc.returncode
@@ -881,9 +596,14 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
         else:
             LOG.info("Destriping will not be applied!")
 
+        # for key in ['mod021km_file',
+        #            'mod02hkm_file',
+        #            'mod02qkm_file']:
+        # metno-adaptions
         for key in [
                 'geo_file', 'mod021km_file', 'mod02hkm_file', 'mod02qkm_file'
         ]:
+
             fname_orig = os.path.join(working_dir, os.path.basename(retv[key]))
             fname_dest = retv[key]
             if os.path.exists(fname_orig):
@@ -905,15 +625,14 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
 
         # Start checking and dowloading the luts (utcpole.dat and
         # leapsec.dat):
-        LOG.info("Checking the modis luts and updating " +
-                 "from internet if necessary!")
-        fresh = check_utcpole_and_leapsec_files(DAYS_BETWEEN_URL_DOWNLOAD)
+        LOG.info("Checking the modis luts and updating from internet if necessary!")
+        fresh = check_utcpole_and_leapsec_files(options.get('leapsec_dir'),
+                                                options.get('days_between_url_download', 14))
         if fresh:
             LOG.info("Files in etc dir are fresh! No url downloading....")
         else:
-            LOG.warning("Files in etc are non existent or too old. " +
-                        "Start url fetch...")
-            update_utcpole_and_leapsec_files()
+            LOG.warning("Files in etc are non existent or too old. Start url fetch...")
+            update_utcpole_and_leapsec_files(options)
 
     except:
         LOG.exception('Failed in run_terra_aqua_l0l1...')
@@ -924,51 +643,19 @@ def run_terra_aqua_l0l1(scene, message, job_id, publish_q):
 
 if __name__ == "__main__":
 
-    import argparse
-
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c",
-        "--config-file",
-        required=True,
-        dest="config_file",
-        type=str,
-        default=None,
-        help="The file containing configuration parameters.")
-    parser.add_argument(
-        "-l",
-        "--log-file",
-        dest="log",
-        type=str,
-        default=None,
-        help="The file to log to (stdout per default).")
+    parser.add_argument("-l", "--log-config",
+                        help="Log config file to use instead of the standard logging.")
+    parser.add_argument("-c", "--config",
+                        help="YAML config file to use.",
+                        required=True)
+    parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0,
+                        help="Verbosity (between 1 and 2 occurrences with more leading to more "
+                        "verbose logging). WARN=0, INFO=1, "
+                        "DEBUG=2. This is overridden by the log config file if specified.")
 
-    args = parser.parse_args()
+    cmd_args = parser.parse_args()
+    setup_logging(cmd_args)
 
-    CONF = ConfigParser.ConfigParser()
-
-    print "Read config from", args.config_file
-
-    CONF.read(args.config_file)
-
-    OPTIONS = {}
-    for option, value in CONF.items(MODE, raw=True):
-        OPTIONS[option] = value
-
-    DAYS_BETWEEN_URL_DOWNLOAD = OPTIONS.get('days_between_url_download', 14)
-    DAYS_KEEP_OLD_ETC_FILES = OPTIONS.get('days_keep_old_etc_files', 60)
-    URL = OPTIONS['url_modis_navigation']
-
-    handler = logging.StreamHandler(sys.stderr)
-
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        fmt=_DEFAULT_LOG_FORMAT, datefmt=_DEFAULT_TIME_FORMAT)
-    handler.setFormatter(formatter)
-    logging.getLogger('').addHandler(handler)
-    logging.getLogger('').setLevel(logging.DEBUG)
-    logging.getLogger('posttroll').setLevel(logging.INFO)
-
-    LOG = logging.getLogger('seadas_modis_runner')
-
-    modis_live_runner()
+    OPTIONS = get_config(cmd_args.config)
+    modis_live_runner(OPTIONS)

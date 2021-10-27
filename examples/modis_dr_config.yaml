@@ -1,0 +1,71 @@
+# Configuration items for the DR MODIS level-1 processing
+
+subscribe_topics:
+  - /PDS/0/nkp/dev/polar/direct_readout
+  - /XLBANDANTENNA/AQUA/ISP
+  - /XLBANDANTENNA/TERRA/ISP
+
+publish_topic: '/EOS'
+
+level0_home: '/local_disk/data/polar_in/direct_readout/modis'
+ephemeris_home: '/local_disk/data/polar_out/direct_readout/modis'
+attitude_home: '/local_disk/data/polar_out/direct_readout/modis'
+level1b_home: '/local_disk/data/polar_out/direct_readout/modis'
+
+# level0_home: /san1/polar_in/direct_readout/eos/lvl0
+# ephemeris_home: /san1/polar_in/direct_readout/eos/lvl1
+# attitude_home: /san1/polar_in/direct_readout/eos/lvl1
+# level1b_home: /san1/polar_in/direct_readout/eos/lvl1
+
+filetype_aqua: "P1540064AAAAAAAAAAAAAA{start_time:%y%j%H%M%S}001.PDS"
+globfile_aqua: "P1540064AAAAAAAAAAAAAA*001.PDS"
+
+packetfile_aqua: "P154095715409581540959{start_time:%y%j%H%M%S}001.PDS"
+geofile_aqua: "MYD03_A{start_time:%y%j_%H%M%S}"
+level1a_aqua: "Aqua_MODIS_l1a_{start_time:%y%j_%H%M%S}"
+
+level1b_aqua: "MYD021km_A{start_time:%y%j_%H%M%S}"
+level1b_250m_aqua: "MYD02Qkm_A{start_time:%y%j_%H%M%S}"
+level1b_500m_aqua: "MYD02Hkm_A{start_time:%y%j_%H%M%S}"
+
+filetype_terra: "P0420064AAAAAAAAAAAAAA{start_time:%y%j%H%M%S}001.PDS"
+globfile_terra: "P0420064AAAAAAAAAAAAAA*001.PDS"
+
+geofile_terra: "MOD03_A{start_time:%y%j_%H%M%S}"
+level1a_terra: "Terra_MODIS_l1a_{start_time:%y%j_%H%M%S}"
+level1b_terra: "MOD021km_A{start_time:%y%j_%H%M%S}"
+level1b_250m_terra: "MOD02Qkm_A{start_time:%y%j_%H%M%S}"
+level1b_500m_terra: "MOD02Hkm_A{start_time:%y%j_%H%M%S}"
+
+working_dir: '/local_disk/src/modis_lvl1proc/work'
+#working_dir: /san1/modislvl1b/work
+
+startnudge: 5
+endnudge: 5
+
+spa_config_file: '/local_disk/opt/MODISL1DB_SPA/current/gbad/smhi_configfile'
+
+url_modis_navigation: 'https://oceandata.sci.gsfc.nasa.gov/Ancillary/LUTs/modis/'
+
+
+days_keep_old_etc_files: 90
+days_between_url_download: 7
+
+log_rotation_days: 1
+log_rotation_backup: 5
+
+ocssw_env: /san1/opt/SeaDAS/8.1/ocssw/OCSSW_bash.env
+seadas_home: /san1/opt/SeaDAS/8.1
+leapsec_dir: /san1/opt/SeaDAS/8.1/ocssw/var/modis
+
+modis_l1a_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_L1A
+modis_l1b_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_L1B
+modis_geo_script: /san1/opt/SeaDAS/8.1/ocssw/bin/modis_GEO
+
+modis_geo_options_terra:
+  - '--verbose'
+  - '--disable-download'
+modis_geo_options_aqua:
+  - '--verbose'
+  - '--enable-dem'
+  - '--disable-download'
