@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016 - 2021 PyTroll
+# Copyright (c) 2016 - 2026 Pytroll
 
 # Author(s):
 
@@ -81,6 +81,12 @@ def reset_job_registry(objdict, eosfiles, key):
     return
 
 
+def init_worker():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=_DEFAULT_LOG_FORMAT
+    )
+
 def modis_live_runner(options):
     """Listens and triggers processing"""
 
@@ -100,7 +106,7 @@ def modis_live_runner(options):
                     "Start url fetch...")
         update_utcpole_and_leapsec_files(options)
 
-    pool = Pool(processes=6, maxtasksperchild=1)
+    pool = Pool(processes=6, maxtasksperchild=1, initializer=init_worker)
     manager = Manager()
     listener_q = manager.Queue()
     publisher_q = manager.Queue()
@@ -199,8 +205,10 @@ def modis_live_runner(options):
 
 
 def create_message(mda, filename, level, options):
-    LOG.debug("mda: = " + str(mda))
-    LOG.debug("type(mda): " + str(type(mda)))
+    """Create the output message."""
+    log = logging.getLogger(__name__)
+    log.debug("mda: = " + str(mda))
+    log.debug("type(mda): " + str(type(mda)))
     to_send = mda.copy()
     if isinstance(filename, (list, tuple, set)):
         del to_send['uri']
@@ -230,6 +238,7 @@ def create_message(mda, filename, level, options):
 
 def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None, uid=None, ftype=None, options=None):
     """Run the gbad for aqua"""
+    log = logging.getLogger(__name__)
 
     working_dir = check_working_dir(options['working_dir'])
 
@@ -254,7 +263,7 @@ def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None,
     att_file = os.path.join(att_dir, att_file)
     eph_file = os.path.basename(packetfile).split('.PDS')[0] + '.eph'
     eph_file = os.path.join(eph_dir, eph_file)
-    LOG.info("eph-file = " + eph_file)
+    log.info("eph-file = " + eph_file)
 
     wrapper_home = SPA_HOME + "/wrapper/gbad"
 
@@ -267,10 +276,10 @@ def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None,
         cmdl.append("configurationfile")
         cmdl.append(spa_config_file)
     else:
-        LOG.warning("SPA config file: {} does not exist. Skip this."
+        log.warning("SPA config file: {} does not exist. Skip this."
                     "If this is not what you want, fix your config".format(spa_config_file))
 
-    LOG.info("Command: " + str(cmdl))
+    log.info("Command: " + str(cmdl))
     # Run the command:
     modislvl1b_proc = Popen(
         cmdl, shell=False, cwd=working_dir, stderr=PIPE, stdout=PIPE)
@@ -279,19 +288,19 @@ def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None,
         line = modislvl1b_proc.stdout.readline()
         if not line:
             break
-        LOG.info(line.rstrip())
+        log.info(line.rstrip())
 
     while True:
         errline = modislvl1b_proc.stderr.readline()
         if not errline:
             break
-        LOG.info(errline.rstrip())
+        log.info(errline.rstrip())
 
     modislvl1b_proc.poll()
     modislvl1b_status = modislvl1b_proc.returncode
-    LOG.debug("Return code from modis lvl1b proc = " + str(modislvl1b_status))
+    log.debug("Return code from modis lvl1b proc = " + str(modislvl1b_status))
     if modislvl1b_status != 0:
-        LOG.error("Failed in the Aqua gbad processing!")
+        log.error("Failed in the Aqua gbad processing!")
         return None, None
 
     return att_file, eph_file
@@ -299,16 +308,17 @@ def run_aqua_gbad(obs_time, end_time=None, orbit_number=None, process_time=None,
 
 def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
     """Process Terra/Aqua MODIS level 0 PDS data to level 1a/1b"""
+    log = logging.getLogger(__name__)
 
     # from subprocess import Popen, PIPE
     from glob import glob
 
     try:
 
-        LOG.debug("Inside run_terra_aqua_l0l1...")
+        log.debug("Inside run_terra_aqua_l0l1...")
 
         working_dir = check_working_dir(options['working_dir'])
-        LOG.debug("Working dir = %s", str(working_dir))
+        log.debug("Working dir = %s", str(working_dir))
 
         if scene['platform_name'] == TERRA:
             mission = 'T'
@@ -327,9 +337,9 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             destripe_on = False
 
         level1b_home = options['level1b_home']
-        LOG.debug("level1b_home = %s", level1b_home)
+        log.debug("level1b_home = %s", level1b_home)
         filetype_terra = options['filetype_terra']
-        LOG.debug("filetype_terra = %s", options['filetype_terra'])
+        log.debug("filetype_terra = %s", options['filetype_terra'])
         geofiles = {}
         geofiles[mission] = options['geofile_%s' % MISSIONS[mission]]
         level1a_terra = options['level1a_terra']
@@ -338,14 +348,14 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
         level1b_500m_terra = options['level1b_500m_terra']
 
         filetype_aqua = options['filetype_aqua']
-        LOG.debug("filetype_aqua = %s", str(filetype_aqua))
+        log.debug("filetype_aqua = %s", str(filetype_aqua))
         level1a_aqua = options['level1a_aqua']
         level1b_aqua = options['level1b_aqua']
         level1b_250m_aqua = options['level1b_250m_aqua']
         level1b_500m_aqua = options['level1b_500m_aqua']
 
         # Get the observation time from the filename as a datetime object:
-        LOG.debug("modis filename = %s", scene['modisfilename'])
+        log.debug("modis filename = %s", scene['modisfilename'])
         bname = os.path.basename(scene['modisfilename'])
         process_time = None
         uid = None
@@ -365,7 +375,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             process_time = res.get('process_time')
             uid = res.get('uid')
             ftype = res.get('type')
-        LOG.debug("bname = %s obstime = %s", str(bname), str(obstime))
+        log.debug("bname = %s obstime = %s", str(bname), str(obstime))
 
         # level1_home
         proctime = datetime.now()
@@ -406,13 +416,13 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             'geo_file': mod03_file
         }
 
-        LOG.debug("Do a file globbing to check for existing level-1b files:")
+        log.debug("Do a file globbing to check for existing level-1b files:")
         mod01files = glob("%s/%s*hdf" % (level1b_home, firstpart))
         if len(mod01files) > 0:
-            LOG.warning("Level 1 file for this scene already exists: %s",
+            log.warning("Level 1 file for this scene already exists: %s",
                         mod01files[0])
 
-        LOG.info("Level-1 filename: " + str(mod01_file))
+        log.info("Level-1 filename: " + str(mod01_file))
 
         modis_l1a_script = options['modis_l1a_script']
         cmdl = [modis_l1a_script,
@@ -423,7 +433,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                 "-o%s" % (os.path.basename(mod01_file)),
                 scene['modisfilename']]
 
-        LOG.debug("Run command: " + str(cmdl))
+        log.debug("Run command: " + str(cmdl))
         my_env = os.environ.copy()
         modislvl1b_proc = Popen(cmdl, shell=False,
                                 cwd=working_dir,
@@ -433,20 +443,20 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line.rstrip())
+            log.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline.rstrip())
+            log.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
-        LOG.debug(
+        log.debug(
             "Return code from modis lvl-1a processing = " + str(modislvl1b_status))
         if modislvl1b_status != 0 and modislvl1b_status is not None:
-            LOG.error("Failed in the Terra/Aqua MODIS level-1 processing!")
+            log.error("Failed in the Terra/Aqua MODIS level-1 processing!")
             return None
 
         fname_orig = os.path.join(working_dir, os.path.basename(mod01_file))
@@ -455,17 +465,17 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
 
             l1a_file = retv['level1a_file']
             pubmsg = create_message(message.data, l1a_file, "1A", options)
-            LOG.info("Sending: %s", pubmsg)
+            log.info("Sending: %s", pubmsg)
             publish_q.put(pubmsg)
         else:
-            LOG.warning("Missing level-1a file! %s", fname_orig)
+            log.warning("Missing level-1a file! %s", fname_orig)
 
         if mission == 'A':
             # Get ephemeris and attitude names
             attitude, ephemeris = run_aqua_gbad(obstime, end_time, orbit_number,
                                                 process_time=process_time, uid=uid, ftype=ftype, options=options)
             if not attitude or not ephemeris:
-                LOG.error(
+                log.error(
                     "Failed producing the attitude and/or the ephemeris file(s)"
                 )
                 return None
@@ -481,7 +491,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             cmdl = get_geo_command_line_list(options, mod01_file, mod03_file,
                                              attitude=attitude, ephemeris=ephemeris)
 
-        LOG.debug("Run command: %s", str(cmdl))
+        log.debug("Run command: %s", str(cmdl))
         modislvl1b_proc = Popen(
             cmdl, shell=False, cwd=working_dir, stderr=PIPE, stdout=PIPE)
 
@@ -489,22 +499,22 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line.rstrip())
+            log.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline.rstrip())
+            log.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
-        LOG.debug("Return code from modis geo-loc processing = " +
+        log.debug("Return code from modis geo-loc processing = " +
                   str(modislvl1b_status))
         # Apparently a return code of 1 and None is okay...
         # Verify which return codes are ok! FIXME!
         if modislvl1b_status not in [0, 1, None]:
-            LOG.error("Failed in the Terra/Aqua MODIS level-1 processing!")
+            log.error("Failed in the Terra/Aqua MODIS level-1 processing!")
             return None
 
         l1b_files = []
@@ -515,7 +525,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             shutil.move(fname_orig, fname_dest)
             l1b_files.append(fname_dest)
         else:
-            LOG.warning("Missing file: %s", fname_orig)
+            log.warning("Missing file: %s", fname_orig)
 
         # modis_L1B.py --verbose $level1a_file $geo_file
         modis_l1b_script = options['modis_l1b_script']
@@ -526,7 +536,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                 mod03_file
                 ]
 
-        LOG.debug("Run command: " + str(cmdl))
+        log.debug("Run command: " + str(cmdl))
         modislvl1b_proc = Popen(
             cmdl, shell=False, cwd=working_dir, stderr=PIPE, stdout=PIPE)
 
@@ -534,25 +544,25 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
             line = modislvl1b_proc.stdout.readline()
             if not line:
                 break
-            LOG.info(line.rstrip())
+            log.info(line.rstrip())
 
         while True:
             errline = modislvl1b_proc.stderr.readline()
             if not errline:
                 break
-            LOG.info(errline.rstrip())
+            log.info(errline.rstrip())
 
         modislvl1b_proc.poll()
         modislvl1b_status = modislvl1b_proc.returncode
 
-        LOG.debug(
+        log.debug(
             "Return code from modis lvl1b processing = " + str(modislvl1b_status))
         if modislvl1b_status != 0 and modislvl1b_status is not None:
-            LOG.error("Failed in the Terra level-1 processing!")
+            log.error("Failed in the Terra level-1 processing!")
             return None
 
         if destripe_on:
-            LOG.info("Apply destriping...")
+            log.info("Apply destriping...")
             # Perform the modis destriping:
             # MOD_PRDS_DB.exe in_hdf in_coeff
             cmdl = [
@@ -568,7 +578,7 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                     os.path.join(DESTRIPE_HOME,
                                  'coeff/%s' % aqua_modis_destripe_coeff))
 
-            LOG.debug("Run command: %s", str(cmdl))
+            log.debug("Run command: %s", str(cmdl))
             modislvl1b_proc = Popen(
                 cmdl, shell=False, cwd=working_dir, stderr=PIPE, stdout=PIPE)
 
@@ -576,25 +586,25 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                 line = modislvl1b_proc.stdout.readline()
                 if not line:
                     break
-                LOG.info(line.rstrip())
+                log.info(line.rstrip())
 
             while True:
                 errline = modislvl1b_proc.stderr.readline()
                 if not errline:
                     break
-                LOG.info(errline.rstrip())
+                log.info(errline.rstrip())
 
             modislvl1b_proc.poll()
             modislvl1b_status = modislvl1b_proc.returncode
 
-            LOG.debug("Return code from modis destriping = " +
+            log.debug("Return code from modis destriping = " +
                       str(modislvl1b_status))
             if modislvl1b_status != 0:
-                LOG.error(
+                log.error(
                     "Failed in the Terra level-1 (destriping) processing!")
                 return None
         else:
-            LOG.info("Destriping will not be applied!")
+            log.info("Destriping will not be applied!")
 
         # for key in ['mod021km_file',
         #            'mod02hkm_file',
@@ -610,35 +620,35 @@ def run_terra_aqua_l0l1(options, scene, message, job_id, publish_q):
                 shutil.move(fname_orig, fname_dest)
                 l1b_files.append(fname_dest)
             else:
-                LOG.warning("Missing file: %s", fname_orig)
+                log.warning("Missing file: %s", fname_orig)
 
         pubmsg = create_message(message.data, l1b_files, '1B', options)
-        LOG.info("Sending: %s", pubmsg)
+        log.info("Sending: %s", pubmsg)
         publish_q.put(pubmsg)
 
         if isinstance(job_id, datetime):
             dt_ = datetime.utcnow() - job_id
-            LOG.info("Terra MODIS level-1b scene " + str(job_id) +
+            log.info("Terra MODIS level-1b scene " + str(job_id) +
                      " finished. It took: " + str(dt_))
         else:
-            LOG.warning("Job entry is not a datetime instance: " + str(job_id))
+            log.warning("Job entry is not a datetime instance: " + str(job_id))
 
         # Start checking and dowloading the luts (utcpole.dat and
         # leapsec.dat):
-        LOG.info("Checking the modis luts and updating from internet if necessary!")
+        log.info("Checking the modis luts and updating from internet if necessary!")
         fresh = check_utcpole_and_leapsec_files(options.get('leapsec_dir'),
                                                 options.get('days_between_url_download', 14))
         if fresh:
-            LOG.info("Files in etc dir are fresh! No url downloading....")
+            log.info("Files in etc dir are fresh! No url downloading....")
         else:
-            LOG.warning("Files in etc are non existent or too old. Start url fetch...")
+            log.warning("Files in etc are non existent or too old. Start url fetch...")
             update_utcpole_and_leapsec_files(options)
 
     except:
-        LOG.exception('Failed in run_terra_aqua_l0l1...')
+        log.exception('Failed in run_terra_aqua_l0l1...')
         raise
 
-    LOG.debug("Leaving run_terra_aqua_l0l1")
+    log.debug("Leaving run_terra_aqua_l0l1")
 
 
 if __name__ == "__main__":

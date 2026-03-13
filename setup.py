@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2013 - 2021 Pytroll
+# Copyright (c) 2013 - 2026 Pytroll
 
 # Author(s):
 
@@ -21,8 +21,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Setup for modis-dr-runner.
-"""
+"""Setup for modis-dr-runner."""
+
+
 from setuptools import setup, find_packages
 
 try:
@@ -63,7 +64,7 @@ setup(name=NAME,
                'bin/seadas_modis_runner.py', ],
       data_files=[],
       install_requires=['posttroll', 'trollsift', 'nwcsafpps_runner', ],
-      python_requires='>=3.6',
+      python_requires='>=3.9',
       zip_safe=False,
       setup_requires=['posttroll', 'setuptools_scm', 'setuptools_scm_git_archive'],
       use_scm_version=True
